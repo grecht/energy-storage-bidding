@@ -1,0 +1,14 @@
+name: masterthesis
+channels:
+    - conda-forge
+dependencies:
+    - ipykernel
+    - numpy
+    - pandas 
+    - scipy
+    - matplotlib
+    - pyomo
+    - ipopt
+    - glpk
+    - numba 
+    - seaborn

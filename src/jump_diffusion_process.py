@@ -5,8 +5,10 @@ import pandas as pd
 from numpy.random import default_rng
 from scipy.stats import linregress, norm
 import pyomo.environ as pyo
+from scipy.stats import skew, kurtosis
 
 from numba import jit, prange
+
 
 def load_rt_csv(year):
     prices = pd.read_csv(f"../dat/OASIS_Real_Time_Dispatch_Zonal_LBMP_{year}.csv")
@@ -20,6 +22,7 @@ def load_rt_csv(year):
     prices.index = pd.to_datetime(((prices.index.astype(np.int64) // ns5min) * ns5min))
     return prices
 
+
 def load_nyiso_rtd():
     prices_2019 = load_rt_csv(2019)
     prices_2020 = load_rt_csv(2020)
@@ -27,6 +30,7 @@ def load_nyiso_rtd():
     prices_2022 = load_rt_csv(2022)
 
     return pd.concat([prices_2019, prices_2020, prices_2021, prices_2022])
+
 
 @dataclass
 class JumpDiffParams:
@@ -65,6 +69,7 @@ class PoissonJumpProcess:
         self._tf = AsinhTransformer(P, xi=0, lambd=self._lambd)
         X = self._tf.transform(P)
 
+
         self._ads = AdditiveDeseasonalizer(daily_seasonality=daily_seasonality,
                                            weekly_seasonality=weekly_seasonality,
                                            yearly_seasonality=yearly_seasonality).fit(X)
@@ -91,7 +96,7 @@ class PoissonJumpProcess:
         (https://doi.org/10.1111/j.1468-0084.2011.00632.x).
         """
         m = pyo.ConcreteModel()
-        
+
         dt = self._dt
 
         m.kappa = pyo.Var(domain=pyo.Reals, bounds=(0, None))
@@ -103,10 +108,10 @@ class PoissonJumpProcess:
 
         def p_j_constr_lo(m):
             return 0 <= m.p_j * dt
-        
+
         def p_j_constr_hi(m):
             return m.p_j * dt <= 1
-        
+
         m.p_j_constr_lo = pyo.Constraint(rule=p_j_constr_lo)
         m.p_j_constr_hi = pyo.Constraint(rule=p_j_constr_hi)
         
@@ -118,7 +123,7 @@ class PoissonJumpProcess:
         m.sigma_sq_j = sigma_sq_j_0 if sigma_sq_j_0 else np.var(Y)
         m.p_j = p_j_0 / dt if p_j_0 else .5 / dt
 
-        # minimize negative log-likelihood        
+        # minimize negative log-likelihood
         m.obj = pyo.Objective(
             expr=- sum(
                 [pyo.log(
@@ -205,7 +210,7 @@ class PoissonJumpProcess:
         # applying inverse variance-stabilizing transformation.
         sim = (sim.T + self._ads.get_seasonality(sim.iloc[:, 0])).T
         sim = self._tf.inv_transform(sim)
-        
+
         if round_to_cents:
             return np.round(sim, 2)
         return sim
@@ -213,16 +218,15 @@ class PoissonJumpProcess:
 
 class PoissonSpikeProcess:
     """
-    Detects and removes spikes, models the residual with a standard
+    Detects and removes spikes, models the difference with a standard
     Ornstein-Uhlenbeck process, then adds back spikes following their
     empirical probability and size distribution.
 
     Based on Zhou et al (https://dx.doi.org/10.2139/ssrn.1962414).
     """
 
-    def __init__(self, scale=1, thresh=50):
+    def __init__(self, scale=30):
         self._scale = scale
-        self._thresh = thresh
 
     def fit(self,
             p,
@@ -230,7 +234,6 @@ class PoissonSpikeProcess:
             weekly_seasonality=True,
             yearly_seasonality=True,
             ret_despiked_p=False):
-
         self._freq = pd.infer_freq(p.index)
         self._last_ts = p.index[-1]  # + pd.Timedelta(1, self._freq)
         #
@@ -238,11 +241,10 @@ class PoissonSpikeProcess:
         self._weekly_seasonality = weekly_seasonality
         self._yearly_seasonality = yearly_seasonality
 
-        # TODO: p not needed, correct in asinhTransformer (normalize=p?)
         self._tf = AsinhTransformer(p, lambd=self._scale, normalize=False)
 
         self._params, p_hat = self._estimate_parameters(p)
-        
+
         if ret_despiked_p:
             return self, p_hat
         return self
@@ -256,7 +258,7 @@ class PoissonSpikeProcess:
                  seed=None,
                  round_to_cents=True):
         """
-        Simulate W paths with T increments and starting price p1.
+        Simulate W paths with T increments and starting price p0.
         """
         rng = default_rng(seed=seed)
 
@@ -283,16 +285,15 @@ class PoissonSpikeProcess:
         x = np.zeros((T + 1, W))
         x[0, :] = x0
 
-        # simulate despiked residual
+        # simulate despiked difference
         for t in range(T):
-            # x[t + 1, :] = ((1 - kappa) * x[t, :] + sigma * xi[t, :])
             x[t + 1, :] = x[t, :] + kappa * (mu - x[t, :]) + sigma * xi[t, :]
 
         x = x[1:, :]
         paths = pd.DataFrame(index=sim_index)
         s = self._ads.get_seasonality(paths)
 
-        # TODO: happens with missing values in original data! Add a warning.
+        # nan values in seasonality occur due to missing values in original data.
         s = s.fillna(s.median())
 
         x = (x.T + s.values).T
@@ -304,11 +305,11 @@ class PoissonSpikeProcess:
         x += b * xi_j
 
         paths = pd.DataFrame(data=x, index=sim_index)
-        
+
         if round_to_cents:
             return np.round(paths, 2)
         return paths
-    
+
     def get_S_before_sim(self, t0_ts, T, freq=None):
         # transform starting price
         if not t0_ts:
@@ -340,7 +341,7 @@ class PoissonSpikeProcess:
 
         kappa = params[0]
         mu = params[1]
-        sigma =  params[2]
+        sigma = params[2]
         emp_jump_distr = params[3]
         emp_jump_prob = params[4]
 
@@ -351,7 +352,7 @@ class PoissonSpikeProcess:
 
         for t in range(T):
             for w in prange(W):
-                # simulate despiked residual
+                # simulate despiked difference
                 x[t + 1, w] = x[t, w] + kappa * (mu - x[t, w]) + sigma * np.random.normal()
 
                 # sample jumps
@@ -364,10 +365,10 @@ class PoissonSpikeProcess:
         x = (x.T + s).T
         x = np.sinh(x) * scale + offset
 
-        # add jumps    
+        # add jumps
         x += xi_j
         return x
-    
+
     @staticmethod
     @jit(nopython=True, parallel=True)
     def fast_simulate_T(W,
@@ -388,7 +389,7 @@ class PoissonSpikeProcess:
 
         kappa = params[0]
         mu = params[1]
-        sigma =  params[2]
+        sigma = params[2]
         emp_jump_distr = params[3]
         emp_jump_prob = params[4]
 
@@ -399,18 +400,18 @@ class PoissonSpikeProcess:
 
         for w in prange(W):
             for t in range(T):
-                # simulate despiked residual
-                x[w, t + 1,] = x[w, t] + kappa * (mu - x[w, t]) + sigma * np.random.normal()
+                # simulate despiked difference
+                x[w, t + 1] = x[w, t] + kappa * (mu - x[w, t]) + sigma * np.random.normal()
 
                 # sample jumps
                 if np.random.binomial(1, emp_jump_prob) == 1:
                     xi_j[w, t] = np.random.choice(emp_jump_distr)
 
         x = x[:, 1:]
-        x = x + S[start_t:end_t]    
+        x = x + S[start_t:end_t]
         x = np.sinh(x) * scale + offset
-        
-        # add jumps    
+
+        # add jumps
         x += xi_j
         return x
 
@@ -418,7 +419,8 @@ class PoissonSpikeProcess:
         # despiked prices, spikes
         p_hat, j_hat = self._detect_spikes(p)
 
-        emp_jump_distr = j_hat[j_hat != 0].values
+        # emp_jump_distr = j_hat[j_hat != 0].values
+        emp_jump_distr = j_hat[j_hat != 0]
         emp_jump_prob = len(j_hat[j_hat != 0]) / len(j_hat)
 
         # estimate ou process parameters on despiked and deseasonalized prices.
@@ -434,61 +436,19 @@ class PoissonSpikeProcess:
 
         return (kappa, mu, sigma, emp_jump_distr, emp_jump_prob), p_hat
 
-    def _detect_spikes(self, p):
-        # estimated price spikes
-        j_hat = pd.Series(index=p.index, data=0)
-
-        # estimated despiked prices
+    def _detect_spikes(self, p, lo_q=.01, hi_q=.96):
         p_hat = p.copy()
+        j_hat = np.zeros(p_hat.size)
+        spikes = np.zeros(p_hat.size)
 
-        n_spikes = np.inf
+        ads = AdditiveDeseasonalizer(daily_seasonality=False, weekly_seasonality=False)
+        yearly_seasonality = ads.fit_get_seasonality(p_hat).values
 
-        ads = AdditiveDeseasonalizer(daily_seasonality=self._daily_seasonality,
-                                     weekly_seasonality=self._weekly_seasonality,
-                                     yearly_seasonality=self._yearly_seasonality)
+        lo, hi = np.quantile(p_hat, [lo_q, hi_q])
+        spikes = (p_hat < lo) | (p_hat > hi)
 
-        # TODO: this does not make sense. Must test quality of estimated params.
-        while n_spikes > 0:
-            # Apply variance-stabilizing transform on despiked prices
-            p_tr = self._tf.transform(p_hat)
-
-            # Deseasonalize variance-stabilized despiked prices
-            s = ads.fit_get_seasonality(p_tr)
-            x = p_tr - s
-
-            # Calibrate standard Ornstein-Uhlenbeck process on residual
-            kappa, _, sigma = self._estimate_ou_process(x)
-
-            # Check if spikes exist which were previously not found
-            zero_inds = np.where(j_hat == 0)[0]
-            zero_inds = zero_inds[zero_inds != 0]
-
-            # Iterative, as there can be dependencies between the iterations
-            for ind in zero_inds:
-                # Explicit form of conditional expected value for
-                # Ornstein-Uhlenbeck process known, as it follows the
-                # Johnson SU distribution after applying the inverse hyperbolic
-                # sine transform.
-                exp = (- self._scale * np.exp(.5 * sigma ** 2)
-                       * np.sinh(- (1 - kappa) * x.iloc[ind - 1] - s.iloc[ind]))
-
-                # classify as spike if absolute deviation from expected value
-                # of Ornstein-Uhlenbeck process exceeds specified threshold.
-                if np.abs(p_hat.iloc[ind] - exp) >= self._thresh:
-                    j_hat.iloc[ind] = p_hat.iloc[ind] - exp
-                    p_hat.iloc[ind] = exp
-                    x.iloc[ind] = self._tf.transform(exp) - s.iloc[ind]
-
-            # Check how many jumps there still are
-            exps = (- self._scale * np.exp(.5 * sigma ** 2)
-                    * np.sinh(- (1 - kappa) * x.iloc[zero_inds - 1].values
-                              - s.iloc[zero_inds].values))
-
-            # set correct index for expectation
-            exps = pd.Series(index=p_hat.iloc[zero_inds].index, data=exps)
-
-            diff_lt_thresh = (np.abs(p_hat.iloc[zero_inds] - exps) >= self._thresh)
-            n_spikes = diff_lt_thresh[diff_lt_thresh].index.size
+        j_hat[spikes] = p_hat[spikes] - yearly_seasonality[spikes]
+        p_hat[spikes] = yearly_seasonality[spikes]
 
         return p_hat, j_hat
 
@@ -532,6 +492,8 @@ class AdditiveDeseasonalizer:
         return self.get_seasonality(ts)
 
     def fit(self, ts):
+        # remove Feb 29th
+        ts = ts.loc[~((ts.index.day == 29) & (ts.index.month == 2))]
         if self._daily_seasonality:
             self._daily_pattern, s_daily = self._det_daily_seasonality(ts)
             ts = ts - s_daily
@@ -656,6 +618,8 @@ class AdditiveDeseasonalizer:
                                                  "day",
                                                  "hour",
                                                  "minute"])
+            # Linearly interpolate in case of Feb 29th.
+            pattern_extr = pattern_extr.interpolate()
 
         pattern_extr["value"] = pattern_extr["pattern"]
         pattern_extr = pattern_extr["value"]
