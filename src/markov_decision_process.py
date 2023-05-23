@@ -58,7 +58,6 @@ def badp_lattice(P, B, S, jdp_params, W=W_TRAIN, k=50):
         for (p_ind, p_t) in enumerate(P):  # last known price at time of decision
             # one period for determining inventory,
             # one for the expected reward.
-            # p_w = psp.fast_simulate_T(W,
             p_w = fast_simulate_T(W,
                                   t * SETTLEMENTS, 
                                   (t + 2) * SETTLEMENTS,

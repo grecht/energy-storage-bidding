@@ -33,7 +33,11 @@ def finite_support_badp_lattice(realizations,
                                 R_MAX=18,
                                 W=W_TRAIN,
                                 k=50,
-                                B=B):
+                                B=B,
+                                seed=None):
+    if seed is not None:
+        np.random.seed(seed)
+    
     # include dummy final stage.
     T = STAGES + 1
     R = np.arange(R_MIN, R_MAX + 1)
@@ -180,7 +184,7 @@ def simulate_finite_support_policy(pol, price_paths, R_MIN=0, R_MAX=18, B=B):
 
     # start at first stage where rewards are evaluated
     for t in range(1, T):
-        stg_bid = pol[t - 1, r[t-1], prv_bid_ind]
+        stg_bid = pol[t - 1, r[t - 1], prv_bid_ind]
         
         buy, sell = np.hsplit(stg_bid, 2)
         buy = buy.reshape(-1)
@@ -258,6 +262,18 @@ def main():
                         handlers=[
                             logging.FileHandler(log_name),
                             logging.StreamHandler()])
+    R_MIN = 0
+    R_MAX = 18
+    R = np.arange(R_MIN, R_MAX + 1)
+
+    pmf, realizations = pseudonormal_pmf()
+
+    V_fin_opt, pol_fin_opt = optex.finite_support_optimal_solution(realizations, pmf)
+    V_fin, pol_fin = optex.finite_support_badp_lattice(realizations, pmf)
+
+
+
+    """
     Rmax = [18, 47, 140]
     pmf, realizations = pseudonormal_pmf()
 
@@ -287,6 +303,7 @@ def main():
         logging.info(f"Time elapsed: {datetime.timedelta(seconds=elapsed)}")
 
         # _, _ = finite_support_lattice_badp(realizations, pmf, R_MIN, R_MAX)
+    """
 
 if __name__ == '__main__':
     main()

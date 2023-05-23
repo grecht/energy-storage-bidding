@@ -1,4 +1,4 @@
-name: masterthesis
+name: energy-storage-bidding
 channels:
     - conda-forge
 dependencies:

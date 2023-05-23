@@ -235,8 +235,7 @@ class PoissonSpikeProcess:
             yearly_seasonality=True,
             ret_despiked_p=False):
         self._freq = pd.infer_freq(p.index)
-        self._last_ts = p.index[-1]  # + pd.Timedelta(1, self._freq)
-        #
+        self._last_ts = p.index[-1]
         self._daily_seasonality = daily_seasonality
         self._weekly_seasonality = weekly_seasonality
         self._yearly_seasonality = yearly_seasonality
