@@ -1,4 +1,4 @@
-This repository displays the implementation and results of my master's thesis.
+This repository displays the implementation and results of my [master's thesis](https://doi.org/10.5281/zenodo.8192258).
 The implementation is in the directory `src/`, the experiments can be found in `exp/` including a notebook `results.ipynb` showing the reproducible results.
 
 Building on [Jiang and Powell](https://pubsonline.informs.org/doi/10.1287/ijoc.2015.0640), I model the problem of bidding into the NYISO real-time market as an energy storage operator.
